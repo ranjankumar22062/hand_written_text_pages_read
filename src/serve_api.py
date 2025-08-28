@@ -1,6 +1,6 @@
 """
 Serve API / CLI for full HTR pipeline
-- Input: handwritten PDF or image(s)
+- Input: handwritten PDF
 - Output: structured typed PDF
 """
 
@@ -8,20 +8,19 @@ import argparse
 import os
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import FileResponse
-
 from src.preprocess import pdf_to_images, preprocess_image
 from src.layout import detect_blocks
 from src.segmentation import segment_lines
-from src.htr_model import HTRModel  # ✅ Fix: import these
+from src.htr_model import HTRModel
 from src.postprocess import clean_text
 from src.pdf_builder import build_pdf
 
-app = FastAPI(title="Handwritten Text Recognition API")
+app = FastAPI(title="HTR Pipeline API")
 
 
 def process_document(input_path, output_path, model_ckpt="models/htr_model.pth"):
     """
-    Run full HTR pipeline on PDF or image and save typed PDF.
+    Run full HTR pipeline on PDF and save typed PDF.
     """
     # 1. Convert PDF → images
     if input_path.lower().endswith(".pdf"):
@@ -30,7 +29,7 @@ def process_document(input_path, output_path, model_ckpt="models/htr_model.pth")
         raise ValueError("Currently only PDF input supported.")
 
     # 2. Load HTR model
-    model = load_model(model_ckpt)
+    model = HTRModel(model_ckpt)
 
     all_page_blocks = []
 
@@ -51,7 +50,7 @@ def process_document(input_path, output_path, model_ckpt="models/htr_model.pth")
             # 6. Recognize each line
             recognized_text = []
             for line_img in lines:
-                text = recognize_line(model, line_img)
+                text = model.recognize_line(line_img)
                 recognized_text.append(clean_text(text))
 
             full_block_text = "\n".join(recognized_text)
@@ -70,9 +69,27 @@ def process_document(input_path, output_path, model_ckpt="models/htr_model.pth")
     return output_path
 
 
-# ----------------------------
+@app.post("/process")
+async def process_api(file: UploadFile = File(...)):
+    """
+    Upload a handwritten PDF and get back the structured typed PDF.
+    """
+    input_path = f"uploads/{file.filename}"
+    output_path = f"outputs/{file.filename.replace('.pdf', '_typed.pdf')}"
+
+    # Save uploaded file
+    os.makedirs("uploads", exist_ok=True)
+    with open(input_path, "wb") as f:
+        f.write(await file.read())
+
+    # Run pipeline
+    result_pdf = process_document(input_path, output_path)
+
+    # Return processed PDF
+    return FileResponse(result_pdf, media_type="application/pdf", filename=os.path.basename(result_pdf))
+
+
 # CLI Support
-# ----------------------------
 def main():
     parser = argparse.ArgumentParser(description="HTR Pipeline - Handwriting to Typed PDF")
     parser.add_argument("--input", type=str, required=True, help="Path to input PDF")
@@ -81,30 +98,6 @@ def main():
     args = parser.parse_args()
 
     process_document(args.input, args.output, args.model)
-
-
-# ----------------------------
-# FastAPI Endpoints
-# ----------------------------
-@app.get("/")
-def root():
-    return {"message": "HTR API is running! Use /process endpoint."}
-
-
-@app.post("/process")
-async def process_api(file: UploadFile = File(...)):
-    """Upload a handwritten PDF → returns typed PDF"""
-    input_path = f"uploads/{file.filename}"
-    output_path = f"outputs/typed_{file.filename}"
-
-    os.makedirs("uploads", exist_ok=True)
-    os.makedirs("outputs", exist_ok=True)
-
-    with open(input_path, "wb") as f:
-        f.write(await file.read())
-
-    result_pdf = process_document(input_path, output_path)
-    return FileResponse(result_pdf, media_type="application/pdf", filename=os.path.basename(result_pdf))
 
 
 if __name__ == "__main__":
