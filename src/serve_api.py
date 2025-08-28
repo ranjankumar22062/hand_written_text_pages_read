@@ -10,7 +10,7 @@ import os
 from src.preprocess import pdf_to_images, preprocess_image
 from src.layout import detect_blocks
 from src.segmentation import segment_lines
-from src.htr_model import load_model, recognize_line
+from models.htr_model import load_model, recognize_line
 from src.postprocess import clean_text
 from src.pdf_builder import build_pdf
 
